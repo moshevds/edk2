@@ -16,6 +16,11 @@ gIsFileMap = {}
 
 DEP_FILE_TAIL = "# Updated \n"
 
+def IsDepsFileTail(line):
+    if line is None:
+        return False
+    return line.strip() in {"# Updated", "Updated"}
+
 class IncludesAutoGen():
     """ This class is to manage the dependent files witch are used in Makefile to support incremental build.
         1. C files:
@@ -107,7 +112,7 @@ ${END}
                         includes.add(dependency_file.strip())
 
                 for item in lines[1:]:
-                    if item == DEP_FILE_TAIL:
+                    if IsDepsFileTail(item):
                         continue
                     dependency_file = item.strip(" \\\n")
                     dependency_file = dependency_file.strip('''"''')
@@ -241,7 +246,11 @@ ${END}
                 newcontent = []
                 with open(abspath,"r") as fd:
                     lines = fd.readlines()
-                if lines[-1] == DEP_FILE_TAIL:
+                while lines and (lines[-1].strip() == ""):
+                    lines.pop()
+                while lines and IsDepsFileTail(lines[-1]):
+                    lines.pop()
+                if not lines:
                     continue
                 firstlineitems = lines[0].strip().split(" ")
 
@@ -266,7 +275,6 @@ ${END}
                     newcontent.append(line1)
                     newcontent.extend(lines[1:])
 
-                newcontent.append("\n")
                 newcontent.append(DEP_FILE_TAIL)
                 with open(abspath,"w") as fw:
                     fw.write("".join(newcontent))
@@ -284,7 +292,11 @@ ${END}
                 newcontent = []
                 with open(abspath,"r") as fd:
                     lines = fd.readlines()
-                if lines[-1] == DEP_FILE_TAIL:
+                while lines and (lines[-1].strip() == ""):
+                    lines.pop()
+                while lines and IsDepsFileTail(lines[-1]):
+                    lines.pop()
+                if not lines:
                     continue
 
                 source_abs = lines[0].strip().split(" ")[0]
@@ -295,7 +307,6 @@ ${END}
                     targetitem += lines[1]
                 newcontent.append(targetitem)
                 newcontent.extend(lines[2:])
-                newcontent.append("\n")
                 newcontent.append(DEP_FILE_TAIL)
                 with open(abspath,"w") as fw:
                     fw.write("".join(newcontent))

@@ -356,6 +356,7 @@ MmcIoBlocks (
     Status = MmcTransferBlock (This, Cmd, Transfer, MediaId, Lba, ConsumeSize, Buffer);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "%a(): Failed to transfer block and Status:%r\n", __func__, Status));
+      return Status;
     }
 
     RemainingBlock               -= BlockCount;

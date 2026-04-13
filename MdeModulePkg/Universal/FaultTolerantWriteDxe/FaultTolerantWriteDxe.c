@@ -49,6 +49,46 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include "FaultTolerantWrite.h"
 VOID  *mFvbRegistration = NULL;
 
+STATIC
+EFI_STATUS
+RefreshFtwDeviceFlashInfo (
+  IN OUT EFI_FTW_DEVICE  *FtwDevice
+  )
+{
+  EFI_STATUS            Status;
+  EFI_PHYSICAL_ADDRESS  WorkSpaceAddress;
+  EFI_PHYSICAL_ADDRESS  SpareAreaAddress;
+  UINT64                Size;
+  UINTN                 WorkSpaceLength;
+  UINTN                 SpareAreaLength;
+
+  Status = GetVariableFlashFtwWorkingInfo (&WorkSpaceAddress, &Size);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = SafeUint64ToUintn (Size, &WorkSpaceLength);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = GetVariableFlashFtwSpareInfo (&SpareAreaAddress, &Size);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  Status = SafeUint64ToUintn (Size, &SpareAreaLength);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+
+  FtwDevice->WorkSpaceAddress = WorkSpaceAddress;
+  FtwDevice->WorkSpaceLength  = WorkSpaceLength;
+  FtwDevice->SpareAreaAddress = SpareAreaAddress;
+  FtwDevice->SpareAreaLength  = SpareAreaLength;
+  return EFI_SUCCESS;
+}
+
 /**
   Retrieve the FVB protocol interface by HANDLE.
 
@@ -169,6 +209,7 @@ FvbNotificationEvent (
                   (VOID **)&FtwProtocol
                   );
   if (!EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_INFO, "Ftw: protocol already installed, skipping notify path\n"));
     return;
   }
 
@@ -176,6 +217,12 @@ FvbNotificationEvent (
   // Found proper FVB protocol and initialize FtwDevice for protocol installation
   //
   FtwDevice = (EFI_FTW_DEVICE *)Context;
+  Status    = RefreshFtwDeviceFlashInfo (FtwDevice);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "Ftw: RefreshFtwDeviceFlashInfo failed: %r\n", Status));
+    return;
+  }
+
   Status    = InitFtwProtocol (FtwDevice);
   if (EFI_ERROR (Status)) {
     return;

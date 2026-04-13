@@ -52,6 +52,7 @@
   MdeModulePkg/MdeModulePkg.dec
   MdePkg/MdePkg.dec
   SecurityPkg/SecurityPkg.dec
+  Silicon/NXP/NxpQoriqLs.dec
 
 [LibraryClasses]
   UefiLib
@@ -76,9 +77,13 @@
 
 [Protocols]
   gEfiRngProtocolGuid                ## PRODUCES
+  gNxpCaamReadyProtocolGuid          ## SOMETIMES_CONSUMES
 
 [Depex]
   TRUE
+
+[Depex.AARCH64]
+  gNxpCaamReadyProtocolGuid
 
 [BuildOptions]
   XCODE:*_*_*_CC_FLAGS = -mmmx -msse

@@ -460,6 +460,7 @@ FtwNotificationEvent (
   //
   Status = GetFvbInfoByAddress (NvStorageVariableBase, NULL, &FvbProtocol);
   if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "Variable: GetFvbInfoByAddress failed for 0x%Lx: %r\n", NvStorageVariableBase, Status));
     return;
   }
 
@@ -493,6 +494,7 @@ FtwNotificationEvent (
   // Initializes variable write service after FTW was ready.
   //
   VariableWriteServiceInitializeDxe ();
+  DEBUG ((DEBUG_INFO, "Variable: VariableWriteServiceInitializeDxe completed\n"));
 
   //
   // Close the notify event to avoid install gEfiVariableWriteArchProtocolGuid again.

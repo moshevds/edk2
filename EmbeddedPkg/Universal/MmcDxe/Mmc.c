@@ -43,6 +43,51 @@ LIST_ENTRY  mMmcHostPool;
 
 EFI_EVENT  gCheckCardsEvent;
 
+STATIC
+BOOLEAN
+MmcDevicePathHasEmmcNode (
+  IN EFI_DEVICE_PATH_PROTOCOL  *DevicePath
+  )
+{
+  EFI_DEVICE_PATH_PROTOCOL  *Node;
+
+  for (Node = DevicePath; !IsDevicePathEnd (Node); Node = NextDevicePathNode (Node)) {
+    if ((DevicePathType (Node) == MESSAGING_DEVICE_PATH) &&
+        (DevicePathSubType (Node) == MSG_EMMC_DP))
+    {
+      return TRUE;
+    }
+  }
+
+  return FALSE;
+}
+
+STATIC
+VOID
+MmcApplyMediaAttributes (
+  IN MMC_HOST_INSTANCE  *MmcHostInstance
+  )
+{
+  BOOLEAN  IsEmmc;
+
+  IsEmmc = MmcDevicePathHasEmmcNode (MmcHostInstance->DevicePath);
+  if (IsEmmc) {
+    MmcHostInstance->BlockIo.Media->RemovableMedia = FALSE;
+  }
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "MmcDxe: media attrs handle=%p emmc=%d present=%d removable=%d logical=%d lastBlock=%Lu blockSize=%u\n",
+    MmcHostInstance->MmcHandle,
+    IsEmmc,
+    MmcHostInstance->BlockIo.Media->MediaPresent,
+    MmcHostInstance->BlockIo.Media->RemovableMedia,
+    MmcHostInstance->BlockIo.Media->LogicalPartition,
+    MmcHostInstance->BlockIo.Media->LastBlock,
+    MmcHostInstance->BlockIo.Media->BlockSize
+    ));
+}
+
 /**
   Initialize the MMC Host Pool to support multiple MMC devices
 **/
@@ -121,6 +166,7 @@ CreateMmcHostInstance (
 
   SetDevicePathEndNode (DevicePath);
   MmcHostInstance->DevicePath = AppendDevicePathNode (DevicePath, NewDevicePathNode);
+  MmcApplyMediaAttributes (MmcHostInstance);
 
   // Publish BlockIO protocol interface
   Status = gBS->InstallMultipleProtocolInterfaces (
@@ -134,6 +180,15 @@ CreateMmcHostInstance (
   if (EFI_ERROR (Status)) {
     goto FREE_DEVICE_PATH;
   }
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "MmcDxe: installed BlockIo handle=%p mediaPresent=%d removable=%d logical=%d\n",
+    MmcHostInstance->MmcHandle,
+    MmcHostInstance->BlockIo.Media->MediaPresent,
+    MmcHostInstance->BlockIo.Media->RemovableMedia,
+    MmcHostInstance->BlockIo.Media->LogicalPartition
+    ));
 
   return MmcHostInstance;
 
@@ -372,13 +427,49 @@ CheckCardsCallback (
     ASSERT (MmcHostInstance != NULL);
 
     if (MmcHostInstance->MmcHost->IsCardPresent (MmcHostInstance->MmcHost) == !MmcHostInstance->Initialized) {
+      BOOLEAN  NewPresentState;
+
       MmcHostInstance->State                       = MmcHwInitializationState;
-      MmcHostInstance->BlockIo.Media->MediaPresent = !MmcHostInstance->Initialized;
-      MmcHostInstance->Initialized                 = !MmcHostInstance->Initialized;
+      NewPresentState                              = !MmcHostInstance->Initialized;
+      MmcHostInstance->BlockIo.Media->MediaPresent = NewPresentState;
+      MmcHostInstance->Initialized                 = NewPresentState;
 
       if (MmcHostInstance->BlockIo.Media->MediaPresent) {
-        InitializeMmcDevice (MmcHostInstance);
+        Status = InitializeMmcDevice (MmcHostInstance);
+        if (EFI_ERROR (Status)) {
+          DEBUG ((
+            DEBUG_ERROR,
+            "MmcDxe: InitializeMmcDevice failed handle=%p status=%r\n",
+            MmcHostInstance->MmcHandle,
+            Status
+            ));
+          MmcHostInstance->BlockIo.Media->MediaPresent = FALSE;
+          MmcHostInstance->Initialized                 = FALSE;
+        } else if (MmcHostInstance->BlockIo.Media->LastBlock == 0) {
+          DEBUG ((
+            DEBUG_ERROR,
+            "MmcDxe: InitializeMmcDevice completed with zero LastBlock handle=%p blockSize=%u\n",
+            MmcHostInstance->MmcHandle,
+            MmcHostInstance->BlockIo.Media->BlockSize
+            ));
+          MmcHostInstance->BlockIo.Media->MediaPresent = FALSE;
+          MmcHostInstance->Initialized                 = FALSE;
+          Status = EFI_DEVICE_ERROR;
+        }
       }
+
+      MmcApplyMediaAttributes (MmcHostInstance);
+
+      DEBUG ((
+        DEBUG_ERROR,
+        "MmcDxe: reinstall BlockIo handle=%p mediaPresent=%d initialized=%d removable=%d lastBlock=%Lu blockSize=%u\n",
+        MmcHostInstance->MmcHandle,
+        MmcHostInstance->BlockIo.Media->MediaPresent,
+        MmcHostInstance->Initialized,
+        MmcHostInstance->BlockIo.Media->RemovableMedia,
+        MmcHostInstance->BlockIo.Media->LastBlock,
+        MmcHostInstance->BlockIo.Media->BlockSize
+        ));
 
       Status = gBS->ReinstallProtocolInterface (
                       (MmcHostInstance->MmcHandle),

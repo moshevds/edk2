@@ -401,7 +401,11 @@ def TrimAslFile(Source, Target, IncludePathFile,AslDeps = False):
     AslIncludes = []
     Lines = DoInclude(Source, '', IncludePathList,IncludeFileList=AslIncludes,filetype='ASL')
     AslIncludes = [item for item in AslIncludes if item !=Source]
-    SaveFileOnChange(os.path.join(os.path.dirname(Target),os.path.basename(Source))+".trim.deps", " \\\n".join([Source+":"] +AslIncludes),False)
+    SaveFileOnChange(
+        os.path.join(os.path.dirname(Target), os.path.basename(Source)) + ".trim.deps",
+        " \\\n".join([Source + ":"] + AslIncludes) + "\n",
+        False
+    )
 
     #
     # Undef MIN and MAX to avoid collision in ASL source code
@@ -455,7 +459,11 @@ def TrimAsmFile(Source, Target, IncludePathFile):
     Lines = DoInclude(Source, '', IncludePathList,IncludeFileList=AsmIncludes,filetype='ASM')
     AsmIncludes = [item for item in AsmIncludes if item != Source]
     if AsmIncludes:
-        SaveFileOnChange(os.path.join(os.path.dirname(Target),os.path.basename(Source))+".trim.deps", " \\\n".join([Source+":"] +AsmIncludes),False)
+        SaveFileOnChange(
+            os.path.join(os.path.dirname(Target), os.path.basename(Source)) + ".trim.deps",
+            " \\\n".join([Source + ":"] + AsmIncludes) + "\n",
+            False
+        )
     # save all lines trimmed
     try:
         with open(Target, 'w') as File:

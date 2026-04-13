@@ -67,6 +67,41 @@ from AutoGen.IncludesAutoGen import IncludesAutoGen
 from GenFds.GenFds import resetFdsGlobalVariable
 from AutoGen.AutoGen import CalculatePriorityValue
 
+DEP_FILE_TAIL = "# Updated \n"
+
+def _sanitize_depfile(pathname):
+    try:
+        with open(pathname, "r") as fd:
+            lines = fd.readlines()
+    except Exception:
+        return
+
+    if not lines:
+        return
+
+    changed = False
+    while lines and (lines[-1].strip() == ""):
+        lines.pop()
+        changed = True
+
+    while lines and (lines[-1].strip() in {"# Updated", "Updated"}):
+        lines.pop()
+        changed = True
+
+    if changed:
+        lines.append(DEP_FILE_TAIL)
+        SaveFileOnChange(pathname, "".join(lines), False)
+
+def _sanitize_depfiles_in_dir(working_dir):
+    if not os.path.isdir(working_dir):
+        return
+
+    for root, _, files in os.walk(working_dir, topdown=False):
+        for name in files:
+            if not name.endswith(".deps"):
+                continue
+            _sanitize_depfile(os.path.join(root, name))
+
 ## standard targets of build command
 gSupportedTarget = ['all', 'genc', 'genmake', 'modules', 'libraries', 'fds', 'clean', 'cleanall', 'cleanlib', 'run']
 
@@ -222,6 +257,17 @@ def LaunchCommand(Command, WorkingDir,ModuleAuto = None):
     # if working directory doesn't exist, Popen() will raise an exception
     if not os.path.isdir(WorkingDir):
         EdkLogger.error("build", FILE_NOT_FOUND, ExtraData=WorkingDir)
+
+    _sanitize_depfiles_in_dir(WorkingDir)
+
+    if ModuleAuto:
+        iau = IncludesAutoGen(WorkingDir,ModuleAuto)
+        if ModuleAuto.ToolChainFamily != TAB_COMPILER_MSFT:
+            iau.UpdateDepsFileforNonMsvc()
+        iau.UpdateDepsFileforTrim()
+        iau.CreateModuleDeps()
+        iau.CreateDepsInclude()
+        iau.CreateDepsTarget()
 
     # Command is used as the first Argument in following Popen().
     # It could be a string or sequence. We find that if command is a string in following Popen(),

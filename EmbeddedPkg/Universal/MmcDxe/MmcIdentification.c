@@ -20,6 +20,7 @@ typedef union {
 #define MAX_RETRY_COUNT        1000
 #define CMD_RETRY_COUNT        20
 #define RCA_SHIFT_OFFSET       16
+#define MMC_FIX_RCA            6
 #define EMMC_CARD_SIZE         512
 #define EMMC_ECSD_SIZE_OFFSET  53
 
@@ -58,8 +59,6 @@ typedef enum _EMMC_DEVICE_STATE {
   EMMC_BTST_STATE,
   EMMC_SLP_STATE
 } EMMC_DEVICE_STATE;
-
-UINT16  mEmmcRcaCount = 0;
 
 STATIC
 EFI_STATUS
@@ -152,7 +151,10 @@ EmmcIdentificationMode (
   Host  = MmcHostInstance->MmcHost;
   Media = MmcHostInstance->BlockIo.Media;
 
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): start OCR=0x%08x RCA=%u\n", Response.Raw, MmcHostInstance->CardInfo.RCA));
+
   // Fetch card identity register
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): CMD2\n"));
   Status = Host->SendCommand (Host, MMC_CMD2, 0);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): Failed to send CMD2, Status=%r.\n", Status));
@@ -165,9 +167,17 @@ EmmcIdentificationMode (
     return Status;
   }
 
-  // Assign a relative address value to the card
-  MmcHostInstance->CardInfo.RCA = ++mEmmcRcaCount; // TODO: might need a more sophisticated way of doing this
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): notify identification state\n"));
+  Status = Host->NotifyState (Host, MmcIdentificationState);
+  if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): Error MmcIdentificationState, Status=%r.\n", Status));
+    return Status;
+  }
+
+  // Use a fixed RCA for eMMC to keep retries deterministic and match other working EDK2 stacks.
+  MmcHostInstance->CardInfo.RCA = MMC_FIX_RCA;
   RCA                           = MmcHostInstance->CardInfo.RCA << RCA_SHIFT_OFFSET;
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): CMD3 RCA=0x%08x\n", RCA));
   Status                        = Host->SendCommand (Host, MMC_CMD3, RCA);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): RCA set error, Status=%r.\n", Status));
@@ -175,6 +185,7 @@ EmmcIdentificationMode (
   }
 
   // Fetch card specific data
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): CMD9 RCA=0x%08x\n", RCA));
   Status = Host->SendCommand (Host, MMC_CMD9, RCA);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): Failed to send CMD9, Status=%r.\n", Status));
@@ -188,6 +199,7 @@ EmmcIdentificationMode (
   }
 
   // Select the card
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): CMD7 RCA=0x%08x\n", RCA));
   Status = Host->SendCommand (Host, MMC_CMD7, RCA);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): Card selection error, Status=%r.\n", Status));
@@ -195,6 +207,7 @@ EmmcIdentificationMode (
 
   if (MMC_HOST_HAS_SETIOS (Host)) {
     // Set 1-bit bus width
+    DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): SetIos clock=0 width=1 mode=%u\n", EMMCBACKWARD));
     Status = Host->SetIos (Host, 0, 1, EMMCBACKWARD);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): Set 1-bit bus width error, Status=%r.\n", Status));
@@ -202,6 +215,7 @@ EmmcIdentificationMode (
     }
 
     // Set 1-bit bus width for EXTCSD
+    DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): EXTCSD bus width -> 1-bit\n"));
     Status = EmmcSetEXTCSD (MmcHostInstance, EXTCSD_BUS_WIDTH, EMMC_BUS_WIDTH_1BIT);
     if (EFI_ERROR (Status)) {
       DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): Set extcsd bus width error, Status=%r.\n", Status));
@@ -220,6 +234,7 @@ EmmcIdentificationMode (
     DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): ECSD fetch error, Status=%r.\n", Status));
   }
 
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): ReadBlockData ECSD\n"));
   Status = Host->ReadBlockData (Host, 0, 512, (UINT32 *)MmcHostInstance->CardInfo.ECSDData);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): ECSD read error, Status=%r.\n", Status));
@@ -247,6 +262,7 @@ EmmcIdentificationMode (
 
   // Setup card type
   MmcHostInstance->CardInfo.CardType = EMMC_CARD;
+  DEBUG ((DEBUG_ERROR, "EmmcIdentificationMode(): success MediaId=0x%x LastBlock=%Lu DeviceType=0x%x\n", Media->MediaId, Media->LastBlock, MmcHostInstance->CardInfo.ECSDData->DEVICE_TYPE));
   return EFI_SUCCESS;
 
 FreePageExit:
@@ -263,18 +279,26 @@ InitializeEmmcDevice (
   EFI_MMC_HOST_PROTOCOL  *Host;
   EFI_STATUS             Status = EFI_SUCCESS;
   ECSD                   *ECSDData;
-  UINT32                 BusClockFreq, Idx, BusMode;
+  UINT32                 BusClockFreq, BusMode, BusWidth, Idx;
   UINT32                 TimingMode[4] = { EMMCHS52DDR1V2, EMMCHS52DDR1V8, EMMCHS52, EMMCHS26 };
 
   Host     = MmcHostInstance->MmcHost;
   ECSDData = MmcHostInstance->CardInfo.ECSDData;
   if (ECSDData->DEVICE_TYPE == EMMCBACKWARD) {
+    DEBUG ((DEBUG_ERROR, "InitializeEmmcDevice(): backward-only device type=0x%x\n", ECSDData->DEVICE_TYPE));
     return EFI_SUCCESS;
   }
 
   if (!MMC_HOST_HAS_SETIOS (Host)) {
     return EFI_SUCCESS;
   }
+
+  //
+  // Mono/LS1046A describes the eSDHC wiring as 4-bit in both ACPI and DT.
+  // Forcing 8-bit here causes deterministic data CRC/end-bit failures after
+  // the bus switch.
+  //
+  BusWidth = 4;
 
   Status = EmmcSetEXTCSD (MmcHostInstance, EXTCSD_HS_TIMING, EMMC_TIMING_HS);
   if (EFI_ERROR (Status)) {
@@ -296,16 +320,16 @@ InitializeEmmcDevice (
         return EFI_UNSUPPORTED;
     }
 
-    Status = Host->SetIos (Host, BusClockFreq, 8, TimingMode[Idx]);
+    Status = Host->SetIos (Host, BusClockFreq, BusWidth, TimingMode[Idx]);
     if (!EFI_ERROR (Status)) {
       switch (TimingMode[Idx]) {
         case EMMCHS52DDR1V2:
         case EMMCHS52DDR1V8:
-          BusMode = EMMC_BUS_WIDTH_DDR_8BIT;
+          BusMode = EMMC_BUS_WIDTH_DDR_4BIT;
           break;
         case EMMCHS52:
         case EMMCHS26:
-          BusMode = EMMC_BUS_WIDTH_8BIT;
+          BusMode = EMMC_BUS_WIDTH_4BIT;
           break;
         default:
           return EFI_UNSUPPORTED;
@@ -793,12 +817,15 @@ InitializeMmcDevice (
   BlockCount = 1;
   MmcHost    = MmcHostInstance->MmcHost;
 
+  DEBUG ((DEBUG_ERROR, "InitializeMmcDevice(): begin currentCardType=%u\n", MmcHostInstance->CardInfo.CardType));
+
   Status = MmcIdentificationMode (MmcHostInstance);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "InitializeMmcDevice(): Error in Identification Mode, Status=%r\n", Status));
     return Status;
   }
 
+  DEBUG ((DEBUG_ERROR, "InitializeMmcDevice(): notify transfer state\n"));
   Status = MmcNotifyState (MmcHostInstance, MmcTransferState);
   if (EFI_ERROR (Status)) {
     DEBUG ((DEBUG_ERROR, "InitializeMmcDevice(): Error MmcTransferState, Status=%r\n", Status));
@@ -816,6 +843,7 @@ InitializeMmcDevice (
   }
 
   // Set Block Length
+  DEBUG ((DEBUG_ERROR, "InitializeMmcDevice(): CMD16 blockSize=%u\n", MmcHostInstance->BlockIo.Media->BlockSize));
   Status = MmcHost->SendCommand (MmcHost, MMC_CMD16, MmcHostInstance->BlockIo.Media->BlockSize);
   if (EFI_ERROR (Status)) {
     DEBUG ((

@@ -1079,6 +1079,7 @@ FindFvbForFtw (
   //
   Status = GetFvbCountAndBuffer (&HandleCount, &HandleBuffer);
   if (EFI_ERROR (Status)) {
+    DEBUG ((DEBUG_ERROR, "Ftw: GetFvbCountAndBuffer failed: %r\n", Status));
     return EFI_NOT_FOUND;
   }
 

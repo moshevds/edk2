@@ -451,10 +451,24 @@ InitializePciHostBridge (
   LIST_ENTRY                *Link;
   UINT64                    HostAddress;
 
+  RootBridgeCount = 0;
+  DEBUG ((DEBUG_ERROR, "PciHostBridgeDxe: InitializePciHostBridge enter\n"));
   RootBridges = PciHostBridgeGetRootBridges (&RootBridgeCount);
   if ((RootBridges == NULL) || (RootBridgeCount == 0)) {
+    DEBUG ((
+      DEBUG_ERROR,
+      "PciHostBridgeDxe: PciHostBridgeGetRootBridges returned %p count=%u\n",
+      RootBridges,
+      (UINT32)RootBridgeCount
+      ));
     return EFI_UNSUPPORTED;
   }
+
+  DEBUG ((
+    DEBUG_ERROR,
+    "PciHostBridgeDxe: root bridge count=%u\n",
+    (UINT32)RootBridgeCount
+    ));
 
   Status = gBS->LocateProtocol (&gEfiCpuIo2ProtocolGuid, NULL, (VOID **)&mCpuIo);
   ASSERT_EFI_ERROR (Status);
